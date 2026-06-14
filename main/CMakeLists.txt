@@ -1,3 +1,23 @@
-idf_component_register(SRCS "main.c"
-                       INCLUDE_DIRS "."
-                       REQUIRES dshot_esc)
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "drive.cpp"
+        "EscWebServer.cpp"
+        "WifiConnection.cpp"
+        "Settings.cpp"
+    INCLUDE_DIRS "."
+    REQUIRES
+        dshot_esc
+        display
+        esc_telem
+        nvs_flash
+        app_update
+        esp_http_server
+        esp_event
+        esp_netif
+        esp_wifi
+        wifimanager
+        nvsstoragemanager
+        webserver
+        jsonwrapper
+)

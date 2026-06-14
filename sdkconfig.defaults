@@ -1,0 +1,28 @@
+# Target: TTGO T-Display v1.1 = vanilla ESP32 (4 MB flash).
+CONFIG_IDF_TARGET="esp32"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Custom dual-OTA partition table (see partitions.csv).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# OTA rollback: a freshly-OTA'd image boots PENDING_VERIFY; main.cpp calls
+# esp_ota_mark_app_valid_cancel_rollback() once WiFi + webserver are up. Any
+# failure (panic, wifi never associates) reboots into the previous slot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# 1000 Hz tick: avoids pdMS_TO_TICKS(N<10) rounding to 0, which silently
+# turns 1-5 ms delays in the DShot transmit loop into busy spins.
+CONFIG_FREERTOS_HZ=1000
+
+# Bigger app_main stack so C++ static constructors (wifi, settings, web) fit.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8000
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# LVGL fonts: throttle (Montserrat 48), telemetry strip (Montserrat 20).
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_20=y

@@ -1,0 +1,11 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Dual-OTA layout for 4MB flash. nvs keeps its standard offset/size so
+# WiFi creds, hostname and pump range survive partition swaps. otadata
+# replaces the old phy_init slot at 0xf000; phy_init shifts to 0x11000.
+# Two 1.875M app slots leave room over the binary; first OTA after a
+# wired single-app flash lands in ota_0 via esp_ota_get_next_update_partition().
+nvs,      data, nvs,     0x9000,  0x6000,
+otadata,  data, ota,     0xf000,  0x2000,
+phy_init, data, phy,     0x11000, 0x1000,
+ota_0,    app,  ota_0,   0x20000, 0x1E0000,
+ota_1,    app,  ota_1,   ,        0x1E0000,

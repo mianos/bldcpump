@@ -31,14 +31,18 @@ typedef struct {
     rmt_encoder_t *copy_encoder;
     rmt_symbol_word_t dshot_delay_symbol;
     int state;
+    bool bidirectional;
 } rmt_dshot_esc_encoder_t;
 
-static void make_dshot_frame(dshot_esc_frame_t *frame, uint16_t throttle, bool telemetry)
+static void make_dshot_frame(dshot_esc_frame_t *frame, uint16_t throttle, bool telemetry, bool bidirectional)
 {
     frame->throttle = throttle;
     frame->telemetry = telemetry;
     uint16_t val = frame->val;
-    uint8_t crc = ((val ^ (val >> 4) ^ (val >> 8)) & 0xF0) >> 4;;
+    uint8_t crc = ((val ^ (val >> 4) ^ (val >> 8)) & 0xF0) >> 4;
+    if (bidirectional) {
+        crc = (~crc) & 0xF; // BDshot uses the bitwise-inverted DShot CRC
+    }
     frame->crc = crc;
     val = frame->val;
     // change the endian
@@ -59,7 +63,7 @@ static size_t rmt_encode_dshot_esc(rmt_encoder_t *encoder, rmt_channel_handle_t 
     // convert user data into dshot frame
     dshot_esc_throttle_t *throttle = (dshot_esc_throttle_t *)primary_data;
     dshot_esc_frame_t frame = {};
-    make_dshot_frame(&frame, throttle->throttle, throttle->telemetry_req);
+    make_dshot_frame(&frame, throttle->throttle, throttle->telemetry_req, dshot_encoder->bidirectional);
 
     switch (dshot_encoder->state) {
     case 0: // send the dshot frame
@@ -118,6 +122,7 @@ esp_err_t rmt_new_dshot_esc_encoder(const dshot_esc_encoder_config_t *config, rm
     dshot_encoder->base.encode = rmt_encode_dshot_esc;
     dshot_encoder->base.del = rmt_del_dshot_encoder;
     dshot_encoder->base.reset = rmt_dshot_encoder_reset;
+    dshot_encoder->bidirectional = config->bidirectional;
     uint32_t delay_ticks = config->resolution / 1e6 * config->post_delay_us;
     rmt_symbol_word_t dshot_delay_symbol = {
         .level0 = 0,

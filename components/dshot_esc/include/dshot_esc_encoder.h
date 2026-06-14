@@ -28,6 +28,7 @@ typedef struct {
     uint32_t resolution;    /*!< Encoder resolution, in Hz */
     uint32_t baud_rate;     /*!< Dshot protocol runs at several different baud rates, e.g. DSHOT300 = 300k baud rate */
     uint32_t post_delay_us; /*!< Delay time after one Dshot frame, in microseconds */
+    bool bidirectional;     /*!< If true, use BDshot CRC (inverted). Caller must also configure RMT TX with invert_out=true. */
 } dshot_esc_encoder_config_t;
 
 /**
