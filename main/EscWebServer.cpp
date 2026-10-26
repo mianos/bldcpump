@@ -229,10 +229,10 @@ void EscWebServer::status_to_json(JsonWrapper &json) {
         json.AddItem("erpm_raw",      static_cast<int>(pkt.erpm));
         json.AddItem("erpm",          erpm_actual);
         json.AddItem("rpm_mech",      mech_rpm);
-        // current_a is reported but the hardware has no current-sense, so the
-        // value is the ADC noise floor (~31.9 A). Returned for completeness;
-        // don't use it.
-        json.AddItem("current_a",     pkt.current_a);
+        // The board has no current-sense shunt, so AM32's current field is its
+        // ADC bias (a constant ~29-32 A). Not reported: a plausible-looking amps
+        // figure gets read as real. The flag says why the field is missing.
+        json.AddItem("current_sense", false);
     }
 
     uint32_t valid = 0, crc_bad = 0, bytes_seen = 0;

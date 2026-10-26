@@ -70,13 +70,14 @@ Returns the full status object — drive state, telemetry, packet counters.
   "telem_have": true, "telem_fresh": true,
   "voltage_v": 13.62, "temperature_c": 38,
   "erpm_raw": 240, "erpm": 24000, "rpm_mech": 4000,
-  "current_a": 31.9,
+  "current_sense": false,
   "telem_pkts_valid": 18432, "telem_pkts_bad": 4
 }
 ```
 
-`current_a` is the AM32 ADC noise floor (~31.9 A) — this ESC has no current
-shunt; the field is reported for completeness, **do not trust it**.
+There is no current reading: this ESC has no current shunt, so AM32's current
+field is just its ADC bias (a constant ~29–32 A). `current_sense: false` says
+so instead of reporting a number that looks real.
 
 #### `POST /pump` — duty-cycle control
 

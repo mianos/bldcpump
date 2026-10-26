@@ -15,7 +15,7 @@ extern "C" {
 //   [3-4] current (centiamps, big-endian uint16)         -> amps  = value / 100
 //   [5-6] consumption (mAh used, big-endian uint16)
 //   [7-8] eRPM (big-endian uint16)                       -> RPM = eRPM * 100 / pole_pairs
-//   [9]   CRC8 (polynomial 0xD5)
+//   [9]   CRC8 (AM32 serial_telemetry: polynomial 0x07, XOR-then-shift; see crc8_byte)
 
 typedef struct {
     uint8_t  temperature_c;
