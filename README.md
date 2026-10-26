@@ -71,9 +71,15 @@ Returns the full status object — drive state, telemetry, packet counters.
   "voltage_v": 13.62, "temperature_c": 38,
   "erpm_raw": 240, "erpm": 24000, "rpm_mech": 4000,
   "current_sense": false,
-  "telem_pkts_valid": 18432, "telem_pkts_bad": 4
+  "telem_pkts_valid": 18432, "telem_resyncs": 18501, "telem_pkts_implausible": 4
 }
 ```
+
+`telem_resyncs` is informational, not an error count: the parser finds packet
+alignment by sliding one byte at a time, and AM32 leaves a stray byte between
+packets, so it runs at roughly one resync per valid packet. The noise figure is
+`telem_pkts_implausible` — packets that passed the CRC but carried impossible
+values (a chance 8-bit CRC match on misaligned bytes), which the filter drops.
 
 There is no current reading: this ESC has no current shunt, so AM32's current
 field is just its ADC bias (a constant ~29–32 A). `current_sense: false` says

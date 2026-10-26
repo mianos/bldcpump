@@ -25,7 +25,12 @@ static int  s_history_idx   = 0;  // next slot to write
 static bool s_have_packet = false;
 
 static _Atomic uint32_t s_valid_count = 0;
-static _Atomic uint32_t s_crc_bad_count = 0;
+// Two different things used to share one "bad" counter. Resyncs are the
+// normal cost of hunting for packet alignment (AM32 leaves a stray byte
+// between packets, so expect about one per valid packet); implausible
+// packets passed the CRC but carried impossible values — the real noise.
+static _Atomic uint32_t s_resync_count = 0;
+static _Atomic uint32_t s_implausible_count = 0;
 static _Atomic uint32_t s_bytes_seen = 0;
 static _Atomic float    s_voltage_scale;  // initialised to 1.0f in esc_telem_init
 
@@ -105,7 +110,7 @@ static void try_parse_packet(const uint8_t *p)
 {
     uint8_t expected = crc8(p, 9);
     if (expected != p[9]) {
-        atomic_fetch_add(&s_crc_bad_count, 1);
+        atomic_fetch_add(&s_resync_count, 1);
         return;
     }
     float scale = atomic_load(&s_voltage_scale);
@@ -120,10 +125,13 @@ static void try_parse_packet(const uint8_t *p)
     // Plausibility filter — reject false-positive CRC matches that landed in
     // physically impossible ranges. With an 8-bit CRC, ~0.4% of misaligned
     // sliding-window positions match by chance; without this filter they
-    // splash into the display.
+    // splash into the display. Bounds must admit every real operating state:
+    // a floor of 10 C used to reject every packet from an ESC powered up in a
+    // cold shed, and a 120 C ceiling hid an overheating one. The byte can't go
+    // negative, so only the ceiling is checked.
     if (pkt.voltage_v < 5.0f  || pkt.voltage_v > 30.0f) goto bogus;
     if (pkt.current_a < 0.0f  || pkt.current_a > 100.0f) goto bogus;
-    if (pkt.temperature_c < 10 || pkt.temperature_c > 120) goto bogus;
+    if (pkt.temperature_c > 150) goto bogus;
     // AM32 reports eRPM/100 — raw values above ~3000 mean >300k actual eRPM, impossible.
     if (pkt.erpm > 3000) goto bogus;
 
@@ -138,7 +146,7 @@ static void try_parse_packet(const uint8_t *p)
     return;
 
 bogus:
-    atomic_fetch_add(&s_crc_bad_count, 1);
+    atomic_fetch_add(&s_implausible_count, 1);
 }
 
 static void rx_task(void *arg)
@@ -240,11 +248,12 @@ bool esc_telem_get_latest(esc_telem_packet_t *out)
     return have;
 }
 
-void esc_telem_stats(uint32_t *valid, uint32_t *crc_bad, uint32_t *bytes_seen)
+void esc_telem_stats(uint32_t *valid, uint32_t *resyncs, uint32_t *implausible, uint32_t *bytes_seen)
 {
-    if (valid)      *valid      = atomic_load(&s_valid_count);
-    if (crc_bad)    *crc_bad    = atomic_load(&s_crc_bad_count);
-    if (bytes_seen) *bytes_seen = atomic_load(&s_bytes_seen);
+    if (valid)       *valid       = atomic_load(&s_valid_count);
+    if (resyncs)     *resyncs     = atomic_load(&s_resync_count);
+    if (implausible) *implausible = atomic_load(&s_implausible_count);
+    if (bytes_seen)  *bytes_seen  = atomic_load(&s_bytes_seen);
 }
 
 bool esc_telem_is_fresh(uint32_t max_age_ms)

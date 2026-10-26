@@ -34,8 +34,11 @@ esp_err_t esc_telem_init(int rx_gpio);
 // if no packet has ever arrived (or only invalid CRCs so far).
 bool esc_telem_get_latest(esc_telem_packet_t *out);
 
-// Cumulative stats for diagnostics.
-void esc_telem_stats(uint32_t *valid, uint32_t *crc_bad, uint32_t *bytes_seen);
+// Cumulative stats for diagnostics. `resyncs` counts CRC misses while hunting
+// for packet alignment — routine, roughly one per valid packet, because AM32
+// leaves a stray byte between packets. `implausible` counts packets that
+// passed the CRC but carried impossible values; that is the real noise figure.
+void esc_telem_stats(uint32_t *valid, uint32_t *resyncs, uint32_t *implausible, uint32_t *bytes_seen);
 
 // True if a valid telemetry packet was received within the last `max_age_ms`.
 // More useful than "is the parser locked?" because AM32 mixes 10-byte telemetry

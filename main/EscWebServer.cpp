@@ -235,10 +235,11 @@ void EscWebServer::status_to_json(JsonWrapper &json) {
         json.AddItem("current_sense", false);
     }
 
-    uint32_t valid = 0, crc_bad = 0, bytes_seen = 0;
-    esc_telem_stats(&valid, &crc_bad, &bytes_seen);
-    json.AddItem("telem_pkts_valid", static_cast<int>(valid));
-    json.AddItem("telem_pkts_bad",   static_cast<int>(crc_bad));
+    uint32_t valid = 0, resyncs = 0, implausible = 0, bytes_seen = 0;
+    esc_telem_stats(&valid, &resyncs, &implausible, &bytes_seen);
+    json.AddItem("telem_pkts_valid",       static_cast<int>(valid));
+    json.AddItem("telem_resyncs",          static_cast<int>(resyncs));
+    json.AddItem("telem_pkts_implausible", static_cast<int>(implausible));
 }
 
 esp_err_t EscWebServer::start() {
