@@ -2,16 +2,16 @@ dependencies:
   wifimanager:
     git: https://github.com/mianos/mianesp.git
     path: components/wifimanager
-    version: idf6-network-provisioning
+    version: main
   nvsstoragemanager:
     git: https://github.com/mianos/mianesp.git
     path: components/nvsstoragemanager
-    version: idf6-network-provisioning
+    version: main
   webserver:
     git: https://github.com/mianos/mianesp.git
     path: components/webserver
-    version: idf6-network-provisioning
+    version: main
   jsonwrapper:
     git: https://github.com/mianos/mianesp.git
     path: components/jsonwrapper
-    version: idf6-network-provisioning
+    version: main

@@ -1,5 +1,9 @@
+#include <cstdlib>
+#include <ctime>
+
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -63,6 +67,14 @@ extern "C" void app_main(void) {
 
     static WifiConnection wifi(settings);
     wifi.wait_for_ip();
+
+    // Wall-clock time for logs and /healthz; without it the clock reads 1970.
+    // Same zone and server as the still. Non-blocking: nothing here needs time.
+    setenv("TZ", "AEST-10AEDT,M10.1.0,M4.1.0/3", 1);
+    tzset();
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "time.google.com");
+    esp_sntp_init();
 
     static WebContext   web_ctx(&wifi.manager());
     static EscWebServer web(&web_ctx, settings);
