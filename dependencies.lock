@@ -57,7 +57,7 @@ dependencies:
       git: git@github.com:mianos/mianesp.git
       path: components/jsonwrapper
       type: git
-    version: 28fe90424c43e52c5c4fa871ed4aa151d87c380d
+    version: c58e730736d9b56abf0e56370bab896e1ff71442
   lvgl/lvgl:
     component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
     dependencies: []
@@ -72,9 +72,9 @@ dependencies:
       git: git@github.com:mianos/mianesp.git
       path: components/nvsstoragemanager
       type: git
-    version: 28fe90424c43e52c5c4fa871ed4aa151d87c380d
+    version: c58e730736d9b56abf0e56370bab896e1ff71442
   webserver:
-    component_hash: 78c9be43246f96d852ab1b6769f8476907fd094448ed95e74afc372ab08fa357
+    component_hash: 863e0abae80dc35ca42819678f2a40b04c50577d2b244bee5885d3cfe702b833
     dependencies:
     - git: git@github.com:mianos/mianesp.git
       name: wifimanager
@@ -92,7 +92,7 @@ dependencies:
       git: https://github.com/mianos/mianesp.git
       path: components/webserver
       type: git
-    version: 28fe90424c43e52c5c4fa871ed4aa151d87c380d
+    version: c58e730736d9b56abf0e56370bab896e1ff71442
   wifimanager:
     component_hash: 123ed2037583a70e9c793a5f7684764f56bc9bb2346415ffd4bc5bab0941d8e0
     dependencies:
@@ -102,7 +102,7 @@ dependencies:
       git: git@github.com:mianos/mianesp.git
       path: components/wifimanager
       type: git
-    version: 28fe90424c43e52c5c4fa871ed4aa151d87c380d
+    version: c58e730736d9b56abf0e56370bab896e1ff71442
 direct_dependencies:
 - espressif/esp_lvgl_port
 - idf
