@@ -99,6 +99,15 @@ so instead of reporting a number that looks real.
 `duty ≤ 0.5` disables the drive. Records the duty so the display shows
 "35%" instead of just the raw throttle.
 
+```json
+{"status": "success", "received_duty": 35, "throttle": 570, "enabled": true,
+ "telem_fresh": true, "rpm_mech": 1050}
+```
+
+`rpm_mech` is the speed when the command arrived (omitted if telemetry is
+stale), so a controller re-sending its duty each sample can spot a stalled
+rotor.
+
 ### Pump range
 
 #### `GET /pump_range` — current `{min, max}` throttle endpoints.

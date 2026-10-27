@@ -369,6 +369,18 @@ esp_err_t EscWebServer::pump_post_handler(httpd_req_t *req) {
     resp.AddItem("received_duty", static_cast<int>(duty + 0.5f));
     resp.AddItem("throttle",      static_cast<int>(throttle));
     resp.AddItem("enabled",       enabled);
+    // Speed as of this command, so a caller re-sending its duty each sample
+    // can tell a stalled rotor from a running one without a second request.
+    esc_telem_packet_t pkt;
+    const bool fresh = esc_telem_get_latest(&pkt) && esc_telem_is_fresh(500);
+    resp.AddItem("telem_fresh", fresh);
+    if (fresh) {
+        portENTER_CRITICAL(&self->config_mu_);
+        const int pp = self->pole_pairs_;
+        portEXIT_CRITICAL(&self->config_mu_);
+        const int erpm = static_cast<int>(pkt.erpm) * 100;
+        resp.AddItem("rpm_mech", pp > 0 ? erpm / pp : erpm);
+    }
     return send_json(req, resp);
 }
 
