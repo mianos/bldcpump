@@ -26,6 +26,7 @@ private:
     static esp_err_t motor_post_handler(httpd_req_t *req);
     static esp_err_t motor_get_handler(httpd_req_t *req);
     static esp_err_t pump_post_handler(httpd_req_t *req);
+    static esp_err_t pump_get_handler(httpd_req_t *req);
     static esp_err_t pump_range_post_handler(httpd_req_t *req);
     static esp_err_t pump_range_get_handler(httpd_req_t *req);
     static esp_err_t firmware_post_handler(httpd_req_t *req);
@@ -37,6 +38,7 @@ private:
     static esp_err_t esc_reset_post_handler(httpd_req_t *req);
 
     void status_to_json(JsonWrapper &json);
+    void pump_to_json(JsonWrapper &json);
     void config_to_json(JsonWrapper &json);
     uint16_t pump_duty_to_throttle(float duty) const;
 

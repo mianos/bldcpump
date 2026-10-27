@@ -27,20 +27,6 @@ constexpr const char *TAG = "escweb";
 // worker. Firmware upload has its own bound (the OTA partition size).
 constexpr size_t kMaxJsonBodyBytes = 4 * 1024;
 
-std::string read_request_body(httpd_req_t *req) {
-    std::string body;
-    body.reserve(req->content_len);
-    char buf[256];
-    int remaining = req->content_len;
-    while (remaining > 0) {
-        int got = httpd_req_recv(req, buf, std::min<int>(remaining, static_cast<int>(sizeof(buf))));
-        if (got <= 0) break;
-        body.append(buf, got);
-        remaining -= got;
-    }
-    return body;
-}
-
 // RAII wrapper around drive_try_acquire_exclusive / drive_release_exclusive.
 // Construct at the top of any handler that takes long-running ownership of the
 // drive; check held() and return 409 if false. Release happens automatically
@@ -55,12 +41,6 @@ public:
 private:
     bool held_;
 };
-
-esp_err_t send_json(httpd_req_t *req, const JsonWrapper &json) {
-    httpd_resp_set_type(req, "application/json");
-    std::string out = json.ToString();
-    return httpd_resp_sendstr(req, out.c_str());
-}
 
 struct SweepResult {
     bool ok;
@@ -251,10 +231,12 @@ esp_err_t EscWebServer::start() {
         httpd_method_t method;
         esp_err_t (*handler)(httpd_req_t *);
     };
-    const std::array<Route, 12> routes = {{
+    // With the base server's three routes this is all 16 it allows.
+    const std::array<Route, 13> routes = {{
         {"/motor",              HTTP_POST, motor_post_handler},
         {"/motor",              HTTP_GET,  motor_get_handler},
         {"/pump",               HTTP_POST, pump_post_handler},
+        {"/pump",               HTTP_GET,  pump_get_handler},
         {"/pump_range",         HTTP_POST, pump_range_post_handler},
         {"/pump_range",         HTTP_GET,  pump_range_get_handler},
         {"/firmware",           HTTP_POST, firmware_post_handler},
@@ -286,12 +268,10 @@ esp_err_t EscWebServer::start() {
 
 // POST /motor {"throttle":0-2047,"enabled":bool,"pole_pairs":N}
 esp_err_t EscWebServer::motor_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
-    if (req->content_len > kMaxJsonBodyBytes) return sendJsonError(req, 413, "request body too large");
-    std::string body = read_request_body(req);
-    if (body.empty()) return sendJsonError(req, 400, "empty body");
-    auto json = JsonWrapper::Parse(body);
-    if (json.Empty()) return sendJsonError(req, 400, "invalid JSON");
+    JsonWrapper json;
+    if (!readJsonBody(req, json, kMaxJsonBodyBytes)) return ESP_FAIL;
 
     int throttle;
     if (json.GetField("throttle", throttle)) {
@@ -322,26 +302,24 @@ esp_err_t EscWebServer::motor_post_handler(httpd_req_t *req) {
 
     JsonWrapper resp;
     self->status_to_json(resp);
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }
 
 esp_err_t EscWebServer::motor_get_handler(httpd_req_t *req) {
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
     JsonWrapper resp;
     self->status_to_json(resp);
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }
 
 // POST /pump {"duty":0-100} — stillerate-compatible speed control.
 // duty<=0.5% disables the drive (treated as off); otherwise maps onto
 // [pump_min,pump_max] throttle range and enables.
 esp_err_t EscWebServer::pump_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
-    if (req->content_len > kMaxJsonBodyBytes) return sendJsonError(req, 413, "request body too large");
-    std::string body = read_request_body(req);
-    if (body.empty()) return sendJsonError(req, 400, "empty body");
-    auto json = JsonWrapper::Parse(body);
-    if (json.Empty()) return sendJsonError(req, 400, "invalid JSON");
+    JsonWrapper json;
+    if (!readJsonBody(req, json, kMaxJsonBodyBytes)) return ESP_FAIL;
 
     float duty;
     if (!json.GetField("duty", duty)) return sendJsonError(req, 400, "missing 'duty'");
@@ -350,49 +328,53 @@ esp_err_t EscWebServer::pump_post_handler(httpd_req_t *req) {
     std::string name;
     json.GetField("name", name);  // optional, informational
 
-    uint16_t throttle = 0;
-    bool enabled;
     if (duty <= kPumpOffDutyPct) {
         drive_set_enabled(false);
         drive_set_duty_pct(0.0f);
-        enabled = false;
     } else {
-        throttle = self->pump_duty_to_throttle(duty);
-        drive_set_throttle(throttle);
+        drive_set_throttle(self->pump_duty_to_throttle(duty));
         drive_set_duty_pct(duty);
         drive_set_enabled(true);
-        enabled = true;
     }
 
     JsonWrapper resp;
-    resp.AddItem("status",        std::string("success"));
-    resp.AddItem("received_duty", static_cast<int>(duty + 0.5f));
-    resp.AddItem("throttle",      static_cast<int>(throttle));
-    resp.AddItem("enabled",       enabled);
-    // Speed as of this command, so a caller re-sending its duty each sample
-    // can tell a stalled rotor from a running one without a second request.
+    self->pump_to_json(resp);
+    return sendJson(req, resp);
+}
+
+esp_err_t EscWebServer::pump_get_handler(httpd_req_t *req) {
+    EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
+    JsonWrapper resp;
+    self->pump_to_json(resp);
+    return sendJson(req, resp);
+}
+
+// rpm_mech is the speed when the request arrived, so a caller re-sending its
+// duty each sample can tell a stalled rotor from a running one.
+void EscWebServer::pump_to_json(JsonWrapper &json) {
+    const DriveStatus ds = drive_get_status();
+    json.AddItem("duty",     ds.duty_pct >= 0.0f ? ds.duty_pct : 0.0f);
+    json.AddItem("enabled",  ds.enabled);
+    json.AddItem("throttle", ds.enabled ? static_cast<int>(ds.target_throttle) : 0);
     esc_telem_packet_t pkt;
     const bool fresh = esc_telem_get_latest(&pkt) && esc_telem_is_fresh(500);
-    resp.AddItem("telem_fresh", fresh);
+    json.AddItem("telem_fresh", fresh);
     if (fresh) {
-        portENTER_CRITICAL(&self->config_mu_);
-        const int pp = self->pole_pairs_;
-        portEXIT_CRITICAL(&self->config_mu_);
+        portENTER_CRITICAL(&config_mu_);
+        const int pp = pole_pairs_;
+        portEXIT_CRITICAL(&config_mu_);
         const int erpm = static_cast<int>(pkt.erpm) * 100;
-        resp.AddItem("rpm_mech", pp > 0 ? erpm / pp : erpm);
+        json.AddItem("rpm_mech", pp > 0 ? erpm / pp : erpm);
     }
-    return send_json(req, resp);
 }
 
 // POST /pump_range {"min":N,"max":N} — set duty->throttle mapping. Either
 // field may be omitted. Persisted to NVS.
 esp_err_t EscWebServer::pump_range_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
-    if (req->content_len > kMaxJsonBodyBytes) return sendJsonError(req, 413, "request body too large");
-    std::string body = read_request_body(req);
-    if (body.empty()) return sendJsonError(req, 400, "empty body");
-    auto json = JsonWrapper::Parse(body);
-    if (json.Empty()) return sendJsonError(req, 400, "invalid JSON");
+    JsonWrapper json;
+    if (!readJsonBody(req, json, kMaxJsonBodyBytes)) return ESP_FAIL;
 
     portENTER_CRITICAL(&self->config_mu_);
     int new_min = self->pump_min_throttle_;
@@ -417,7 +399,7 @@ esp_err_t EscWebServer::pump_range_post_handler(httpd_req_t *req) {
     JsonWrapper resp;
     resp.AddItem("min", static_cast<int>(lo));
     resp.AddItem("max", static_cast<int>(hi));
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }
 
 esp_err_t EscWebServer::pump_range_get_handler(httpd_req_t *req) {
@@ -430,7 +412,7 @@ esp_err_t EscWebServer::pump_range_get_handler(httpd_req_t *req) {
     JsonWrapper resp;
     resp.AddItem("min", static_cast<int>(lo));
     resp.AddItem("max", static_cast<int>(hi));
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }
 
 // RFC 1123-ish: 1-32 chars, [a-zA-Z0-9-], no leading/trailing hyphen.
@@ -469,18 +451,16 @@ esp_err_t EscWebServer::config_get_handler(httpd_req_t *req) {
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
     JsonWrapper resp;
     self->config_to_json(resp);
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }
 
 // POST /config {"voltage_scale":1.05,"pole_pairs":6,"pump_min":400,"pump_max":1000}
 // All fields optional; only present ones are updated + persisted.
 esp_err_t EscWebServer::config_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
-    if (req->content_len > kMaxJsonBodyBytes) return sendJsonError(req, 413, "request body too large");
-    std::string body = read_request_body(req);
-    if (body.empty()) return sendJsonError(req, 400, "empty body");
-    auto json = JsonWrapper::Parse(body);
-    if (json.Empty()) return sendJsonError(req, 400, "invalid JSON");
+    JsonWrapper json;
+    if (!readJsonBody(req, json, kMaxJsonBodyBytes)) return ESP_FAIL;
 
     std::string hostname;
     if (json.GetField("hostname", hostname)) {
@@ -548,7 +528,7 @@ esp_err_t EscWebServer::config_post_handler(httpd_req_t *req) {
 
     JsonWrapper resp;
     self->config_to_json(resp);
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }
 
 // POST /config/reset {"hostname":"..."}? — wipe every persisted parameter back
@@ -556,6 +536,7 @@ esp_err_t EscWebServer::config_post_handler(httpd_req_t *req) {
 // hostname is used in place of the seeded default. Refuses while the motor is
 // enabled (resetting pump_min/max under a running drive would jolt the load).
 esp_err_t EscWebServer::config_reset_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
     DriveExclusive ex;
     if (!ex.held()) return sendJsonError(req, 409, "another exclusive operation in progress");
@@ -566,11 +547,9 @@ esp_err_t EscWebServer::config_reset_post_handler(httpd_req_t *req) {
     std::string new_hostname;
     bool wipe_wifi = false;
     if (req->content_len > 0) {
-        if (req->content_len > kMaxJsonBodyBytes) return sendJsonError(req, 413, "request body too large");
-        std::string body = read_request_body(req);
-        if (!body.empty()) {
-            auto json = JsonWrapper::Parse(body);
-            if (json.Empty()) return sendJsonError(req, 400, "invalid JSON");
+        JsonWrapper json;
+        if (!readJsonBody(req, json, kMaxJsonBodyBytes)) return ESP_FAIL;
+        {
             if (json.GetField("hostname", new_hostname)) {
                 if (!valid_hostname(new_hostname)) {
                     return sendJsonError(req, 400, "hostname must be 1-32 chars [a-zA-Z0-9-], no leading/trailing '-'");
@@ -605,10 +584,10 @@ esp_err_t EscWebServer::config_reset_post_handler(httpd_req_t *req) {
         new_hostname.empty() ? "esc-pump" : new_hostname.c_str(), wipe_wifi);
 
     JsonWrapper resp;
-    resp.AddItem("status", std::string(wipe_wifi ? "reset+wifi_clear+reboot" : "reset"));
     resp.AddItem("wifi_cleared", wipe_wifi);
+    resp.AddItem("rebooting", wipe_wifi);
     self->config_to_json(resp);
-    esp_err_t r = send_json(req, resp);
+    esp_err_t r = sendJson(req, resp);
 
     if (wipe_wifi) {
         // esp_wifi_restore() blanks the saved STA config in NVS. The device
@@ -648,6 +627,7 @@ esp_err_t EscWebServer::config_reset_post_handler(httpd_req_t *req) {
 // Refuses (409) if the motor is already enabled — calibration owns the drive
 // for the duration of the sweep. The drive is force-disabled on every exit.
 esp_err_t EscWebServer::calibrate_pump_min_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     EscWebServer *self = static_cast<EscWebServer *>(req->user_ctx);
     DriveExclusive ex;
     if (!ex.held()) return sendJsonError(req, 409, "another exclusive operation in progress");
@@ -665,11 +645,9 @@ esp_err_t EscWebServer::calibrate_pump_min_post_handler(httpd_req_t *req) {
     bool save      = false;
 
     if (req->content_len > 0) {
-        if (req->content_len > kMaxJsonBodyBytes) return sendJsonError(req, 413, "request body too large");
-        std::string body = read_request_body(req);
-        if (!body.empty()) {
-            auto json = JsonWrapper::Parse(body);
-            if (json.Empty()) return sendJsonError(req, 400, "invalid JSON");
+        JsonWrapper json;
+        if (!readJsonBody(req, json, kMaxJsonBodyBytes)) return ESP_FAIL;
+        {
             json.GetField("ascending",      ascending);
             json.GetField("start_throttle", start);
             json.GetField("step",           step);
@@ -711,9 +689,10 @@ esp_err_t EscWebServer::calibrate_pump_min_post_handler(httpd_req_t *req) {
         ESP_LOGW(TAG, "calibrate failed: %s (last_erpm_raw=%u)", r.error, r.last_erpm_raw);
         JsonWrapper err;
         err.AddItem("error",         std::string(r.error ? r.error : "unknown"));
+        err.AddItem("statusCode",    422);
         err.AddItem("last_erpm_raw", static_cast<int>(r.last_erpm_raw));
-        httpd_resp_set_status(req, "422 Unprocessable Entity");
-        return send_json(req, err);
+        sendJson(req, err, 422);
+        return ESP_FAIL;
     }
 
     bool saved = false;
@@ -758,7 +737,7 @@ esp_err_t EscWebServer::calibrate_pump_min_post_handler(httpd_req_t *req) {
     if (save_note) resp.AddItem("save_note", std::string(save_note));
     resp.AddItem("pump_min",             static_cast<int>(final_lo));
     resp.AddItem("pump_max",             static_cast<int>(final_hi));
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }
 
 // POST /esc/reset — force-disable the drive and replay AM32's boot-time arm
@@ -769,16 +748,15 @@ esp_err_t EscWebServer::calibrate_pump_min_post_handler(httpd_req_t *req) {
 // Body (optional):
 //   timeout_ms  default 12000 — how long to wait for drive_task to report armed
 esp_err_t EscWebServer::esc_reset_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     DriveExclusive ex;
     if (!ex.held()) return sendJsonError(req, 409, "another exclusive operation in progress");
 
     int timeout_ms = 12000;
     if (req->content_len > 0) {
-        if (req->content_len > kMaxJsonBodyBytes) return sendJsonError(req, 413, "request body too large");
-        std::string body = read_request_body(req);
-        if (!body.empty()) {
-            auto json = JsonWrapper::Parse(body);
-            if (json.Empty()) return sendJsonError(req, 400, "invalid JSON");
+        JsonWrapper json;
+        if (!readJsonBody(req, json, kMaxJsonBodyBytes)) return ESP_FAIL;
+        {
             json.GetField("timeout_ms", timeout_ms);
         }
     }
@@ -809,20 +787,21 @@ esp_err_t EscWebServer::esc_reset_post_handler(httpd_req_t *req) {
     }
 
     JsonWrapper resp;
-    resp.AddItem("status",  std::string(armed ? "rearmed" : "rearm_timeout"));
+    if (!armed) {
+        resp.AddItem("error", std::string("AM32 did not complete the arm sequence; power-cycle the ESC"));
+        resp.AddItem("statusCode", 504);
+    }
     resp.AddItem("armed",   armed);
     resp.AddItem("enabled", drive_get_status().enabled);
-    if (!armed) {
-        resp.AddItem("note", std::string("AM32 did not complete arm sequence; "
-                                         "power-cycle the ESC and try again"));
-    }
-    return send_json(req, resp);
+    sendJson(req, resp, armed ? 200 : 504);
+    return armed ? ESP_OK : ESP_FAIL;
 }
 
 // POST /firmware — raw .bin body. Streams into the inactive OTA slot, sets it
 // as next boot, reboots. Refuses while the motor is enabled — disable first.
 // Deploy: curl --data-binary @build/<project>.bin http://<host>/firmware
 esp_err_t EscWebServer::firmware_post_handler(httpd_req_t *req) {
+    ESP_LOGW(TAG, "POST %s from %s", req->uri, callerAddress(req).c_str());
     DriveExclusive ex;
     if (!ex.held()) return sendJsonError(req, 409, "another exclusive operation in progress");
     if (drive_get_status().enabled) {
@@ -868,10 +847,10 @@ esp_err_t EscWebServer::firmware_post_handler(httpd_req_t *req) {
 
     ESP_LOGW(TAG, "OTA: %d bytes written to %s; rebooting", written, target->label);
     JsonWrapper resp;
-    resp.AddItem("status",    std::string("ok"));
     resp.AddItem("written",   written);
     resp.AddItem("partition", std::string(target->label));
-    send_json(req, resp);
+    resp.AddItem("rebooting", true);
+    sendJson(req, resp);
 
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
@@ -887,5 +866,5 @@ esp_err_t EscWebServer::firmware_get_handler(httpd_req_t *req) {
     resp.AddItem("date",      std::string(desc->date));
     resp.AddItem("time",      std::string(desc->time));
     resp.AddItem("partition", std::string(running->label));
-    return send_json(req, resp);
+    return sendJson(req, resp);
 }

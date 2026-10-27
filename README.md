@@ -39,7 +39,12 @@ WiFi creds, hostname, and pump range survive partition swaps.
 
 ## HTTP API
 
-All endpoints return JSON. Errors return `{"error": "...", "statusCode": N}`.
+All endpoints return JSON. Success is a 2xx whose body is the resulting
+state. Errors return `{"error": "...", "statusCode": N}` with the same HTTP
+status: 400 bad input, 404 unknown path, 405 wrong method, 409 conflicting
+state (motor enabled, another operation running), 413 body too large, 422 the
+device tried and failed, 504 it timed out. Every POST is logged with the
+caller's address.
 
 ### Realtime control
 
@@ -100,9 +105,10 @@ so instead of reporting a number that looks real.
 "35%" instead of just the raw throttle.
 
 ```json
-{"status": "success", "received_duty": 35, "throttle": 570, "enabled": true,
- "telem_fresh": true, "rpm_mech": 1050}
+{"duty": 35, "enabled": true, "throttle": 570, "telem_fresh": true, "rpm_mech": 1050}
 ```
+
+`GET /pump` returns the same object without changing anything.
 
 `rpm_mech` is the speed when the command arrived (omitted if telemetry is
 stale), so a controller re-sending its duty each sample can spot a stalled
@@ -202,7 +208,8 @@ the rotor spinning is the floor; the recommendation is `floor × (1 + margin_pct
 `ascending: true` ramps **up** from rest until the rotor first starts spinning
 — this is the cold-start floor, often higher than the descending floor.
 
-Response includes `floor_throttle`, `recommended_pump_min`, `stalled_at`,
+A sweep that can't find a floor returns 422 with `error` and `last_erpm_raw`.
+Otherwise the response includes `floor_throttle`, `recommended_pump_min`, `stalled_at`,
 `last_erpm_raw`. With `"save": true` the recommendation is written into
 `pump_min`. Refuses (409) while the motor is enabled or another exclusive
 operation is in progress.
@@ -223,11 +230,11 @@ or transient fault. If AM32 beeps, it's listening again.
 waits for the drive task to report `armed: true` again. Response:
 
 ```json
-{"status": "rearmed", "armed": true, "enabled": false}
+{"armed": true, "enabled": false}
 ```
 
-Returns `"rearm_timeout"` and `armed: false` if the sequence didn't
-complete — in that case, power-cycle the ESC.
+If the sequence doesn't complete it returns 504 with `armed: false` and an
+`error`; power-cycle the ESC.
 
 ### OTA
 
@@ -252,9 +259,9 @@ as the body and `esp_ota_end` returns `ESP_ERR_OTA_VALIDATE_FAILED`.
 
 Refuses (409) while the motor is enabled. Rejects (413) images larger
 than the OTA partition. On success: writes to the inactive slot, sets it
-as next boot, restarts. Rollback is armed for ~10 s after boot; once
-WiFi + webserver come up, `esp_ota_mark_app_valid_cancel_rollback()`
-commits the image.
+as next boot, replies `{"written", "partition", "rebooting": true}` and
+restarts. The new image boots pending verification; once WiFi and the web
+server come up, `esp_ota_mark_app_valid_cancel_rollback()` commits it.
 
 ## Settings reference
 
